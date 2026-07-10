@@ -1,0 +1,236 @@
+/* Multichart — 2x2 grid + per-quadrant styling. */
+
+* { box-sizing: border-box; }
+html, body {
+  margin: 0; padding: 0; width: 100%; height: 100%;
+  background: #fafafa; color: #222;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 12px; overflow: hidden;
+}
+
+/* ---- Page-level brand block (fixed top-left, above charts; spec §3.4 / A.9) ---- */
+#brand {
+  position: fixed; top: 8px; left: 12px; z-index: 1000;
+  display: flex; align-items: center; gap: 10px;
+  pointer-events: none;            /* never intercept chart interaction */
+}
+#brand img { height: 34px; width: auto; opacity: 0.95; display: block; }
+#brand .brand-name {
+  font-size: 18px; font-weight: 600; letter-spacing: 1.1px; color: #cccccc;
+  text-shadow: 0 1px 0 rgba(255,255,255,0.8);
+}
+
+/* ---- 2x2 responsive grid ---- */
+#grid {
+  position: fixed; inset: 0;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: 1fr 1fr;
+  gap: 6px;
+  padding: 6px;
+  /* leave headroom under the fixed brand block so quadrant 0 controls clear it */
+  padding-top: 50px;
+  background: #fafafa;
+}
+
+/* ---- Grid cell (server-rendered placeholder; JS mounts a .quadrant inside) ---- */
+.quadrant-slot {
+  position: relative;
+  display: flex; flex-direction: column;
+  min-width: 0; min-height: 0;          /* allow grid children to shrink */
+}
+
+/* ---- A single quadrant ---- */
+.quadrant {
+  position: relative;
+  display: flex; flex-direction: column; flex: 1 1 auto;
+  min-width: 0; min-height: 0;
+  background: #ffffff;
+  border: 1px solid #e2e2e2;
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+/* Maximized quadrant fills the viewport BELOW the brand band (top: 50px), so the
+ * control strip never slides under the fixed top-left brand. The reserved band
+ * keeps the brand text on the white page background. */
+#grid.has-max .quadrant-slot { display: none; }
+#grid.has-max .quadrant-slot.maximized {
+  display: flex;
+  position: fixed; top: 50px; left: 0; right: 0; bottom: 0; z-index: 800;
+}
+#grid.has-max .quadrant-slot.maximized .quadrant {
+  border-radius: 0; border: none;
+}
+/* In the maximized view the per-canvas QE watermark sat right on top of the
+ * native time axis (which is in the bottom ~28 px of the chart canvas) — its
+ * 42 px logo + link was hiding the X-axis labels. Lift it up so the axis is
+ * never obscured. */
+#grid.has-max .quadrant-slot.maximized .q-brand-overlay { bottom: 40px; }
+
+/* ---- Control strip ---- */
+.q-controls {
+  flex: 0 0 auto;
+  display: flex; align-items: center; flex-wrap: wrap; gap: 5px 6px;
+  padding: 4px 8px;
+  background: #0f0f0f; color: #eee;
+  border-bottom: 1px solid #333;
+  font-size: 12px; min-height: 30px;
+}
+.q-controls select, .q-controls button {
+  background: #262626; color: #eee; border: 1px solid #444;
+  padding: 3px 8px; border-radius: 4px; font-size: 12px; cursor: pointer;
+  font-family: inherit; line-height: 1.2;
+}
+.q-controls button:hover, .q-controls select:hover { background: #333; border-color: #888; }
+.q-controls button.active { background: #1e3aff; border-color: #5b21b6; color: #fff; }
+.q-controls .spacer { flex: 1 1 auto; }
+/* Action buttons keep their size (never shrink/clip); dropdowns may shrink. */
+.q-controls button { flex: 0 0 auto; }
+.q-controls select { flex: 0 1 auto; min-width: 40px; }
+/* Static ticker label (NQ-only; replaces the ticker dropdown). */
+.q-controls .q-ticker-static {
+  background: #1c2433; color: #fff; border: 1px solid #3a4a66; padding: 3px 9px;
+  border-radius: 4px; font-size: 12px; font-weight: 700; line-height: 1.2; flex: 0 0 auto;
+  display: inline-flex; align-items: center; letter-spacing: .3px;
+}
+/* Make maximize/pop-out stand out so they're easy to find. */
+.q-max, .q-pop { font-size: 14px; background: #1c2433; border-color: #3a4a66; }
+
+/* ---- Per-indicator toggle bubbles ---- */
+.q-ind-dots { display: flex; align-items: center; gap: 5px; margin: 0 2px; }
+.q-controls .q-ind-dot {
+  width: 14px; height: 14px; min-height: 0; padding: 0; border-radius: 50%;
+  border: 2px solid var(--ind-color);
+  background: var(--ind-color);          /* filled = ON */
+  cursor: pointer; line-height: 1; flex: 0 0 auto;
+}
+.q-controls .q-ind-dot.off { background: transparent; opacity: 0.45; }  /* hollow = OFF */
+.q-controls .q-ind-dot:hover { filter: brightness(1.2); border-color: var(--ind-color); }
+.q-controls .q-badge {
+  font-size: 10px; padding: 2px 6px; border-radius: 3px; font-weight: 600;
+  letter-spacing: 0.3px; white-space: nowrap;
+}
+.q-badge.live    { color: #26a69a; }
+.q-badge.stale   { color: #f59e0b; }
+.q-badge.down    { color: #ef4444; }
+.q-badge.loading { color: #aaa; }
+
+/* ---- Chart wrap (chart + overlay canvas) ---- */
+.q-wrap {
+  position: relative; flex: 1 1 auto; min-height: 0;
+  background: #ffffff;
+}
+.q-chart { position: absolute; inset: 0; }
+/* OHLC tooltip / legend: top-left of the chart area, updates on crosshair move.
+ * top:30px (not 6px) so the readout clears the MON..FRI weekday labels that
+ * drawWeekdayNames() paints onto the canvas overlay at y=8 (2026-06-09). */
+.q-legend {
+  position: absolute; top: 30px; left: 8px; z-index: 7;
+  font: 600 11px/1.2 "SF Mono", Menlo, Consolas, monospace;
+  background: rgba(255, 255, 255, 0.88);
+  color: #222;
+  padding: 3px 7px;
+  border-radius: 3px;
+  pointer-events: none;
+  white-space: nowrap;
+}
+.q-overlay {
+  position: absolute; left: 0; top: 0;
+  pointer-events: none; z-index: 5;
+}
+/* Hide the in-chart TradingView logo — replaced with per-canvas watermark. */
+.q-chart a[href*="tradingview.com"] { display: none !important; }
+
+/* ---- Per-canvas QE watermark (bottom-left inside each chart; Appendix A.9) ---- */
+.q-brand-overlay {
+  position: absolute; left: 8px; bottom: 6px; z-index: 6;
+  display: flex; flex-direction: column; align-items: flex-start;
+  pointer-events: auto;
+}
+.q-brand-overlay img { height: 42px; opacity: 0.85; }
+.q-brand-overlay a {
+  color: #888; font-size: 9px; text-decoration: none; margin-top: 2px;
+  letter-spacing: 0.3px;
+}
+.q-brand-overlay a:hover { color: #444; }
+
+/* ---- footer (every view) ----
+ * Footer: candle timeframe caption (center) ·
+ * Flexbox layout.
+ * self-position. Colors/weights per the QE brand standard. */
+.q-footer {
+  flex: 0 0 auto;
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 2px 10px; min-height: 22px;
+  background: #ffffff; border-top: 1px solid #e2e2e2;
+}
+.q-footer-tf {
+  color: #5a6472; font-size: 12px; font-weight: 600;
+  letter-spacing: 0.4px; text-transform: uppercase;
+}
+.q-footer-url {
+  color: #000; font-size: 13px; font-weight: 700;
+  text-decoration: none; letter-spacing: 0.2px;
+}
+.q-footer-url:hover { text-decoration: underline; }
+
+/* ---- Error / empty-quadrant message (spec §9 bad ticker/tf) ---- */
+.q-error {
+  position: absolute; inset: 0; z-index: 20;
+  display: none; align-items: center; justify-content: center;
+  padding: 16px; text-align: center;
+  background: #fff; color: #ef4444;
+  font-family: monospace; font-size: 13px;
+}
+.q-error.show { display: flex; }
+
+/* ---- Pop-out / single-quadrant full-page mode ---- */
+body.single .quadrant {
+  position: fixed; inset: 0; border: none; border-radius: 0;
+}
+
+/* ---- Page-level Dual View toggle button (sits in the brand band) ---- */
+#brand { pointer-events: none; }
+#brand #dual-btn {
+  pointer-events: auto;
+  margin-left: 16px;
+  padding: 4px 14px;
+  background: #1c2433; color: #eee;
+  border: 1px solid #3a4a66; border-radius: 4px;
+  font: 600 12px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  letter-spacing: 0.4px;
+  cursor: pointer;
+}
+#brand #dual-btn:hover { background: #2a3548; border-color: #5b6a8a; }
+#brand #dual-btn.active { background: #1e3aff; border-color: #5b21b6; color: #fff; }
+
+/* ---- Ticker-link toggle (sits right after the Dual button) ---- */
+#brand #link-btn {
+  pointer-events: auto;
+  margin-left: 8px;
+  padding: 4px 14px;
+  background: #1c2433; color: #eee;
+  border: 1px solid #3a4a66; border-radius: 4px;
+  font: 600 12px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  letter-spacing: 0.4px;
+  cursor: pointer;
+}
+#brand #link-btn:hover { background: #2a3548; border-color: #5b6a8a; }
+#brand #link-btn.active { background: #16a34a; border-color: #15803d; color: #fff; }
+
+/* ---- Dual view container: 30m on top + 1m on bottom for the same ticker ---- */
+#dual { display: none; }
+body.dual-on #grid { display: none; }
+body.dual-on #dual {
+  display: flex; flex-direction: row;          /* side-by-side panes */
+  position: fixed; top: 50px; left: 0; right: 0; bottom: 0;
+  gap: 6px; padding: 6px; background: #fafafa;
+}
+.dual-slot {
+  position: relative;
+  display: flex; flex-direction: column;
+  min-width: 0; min-height: 0;
+}
+.dual-slot[data-side="left"]  { flex: 1 1 0; }   /* 1H  — last 5 weekdays */
+.dual-slot[data-side="right"] { flex: 1 1 0; }   /* 15m — last 3 trading days, fit exactly */

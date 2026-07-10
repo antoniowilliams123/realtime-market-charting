@@ -1,0 +1,9 @@
+flask
+gunicorn
+gevent
+numpy
+pandas
+pyarrow
+
+# live mode only:
+# databento
